@@ -74,7 +74,7 @@ def obter_carteira_projecao(limit: int = 5000, offset: int = 0):
                     f.id AS "COD FUNDO",
                     f.nm_fundo AS "FUNDO",
                     f.vl_orcamento_contrato AS "MAF INICIAL",
-                    (ta.valor / NULLIF(f.vl_orcamento_contrato, 0)) AS "% FEE/MAF",
+                    (ta.valor / NULLIF(f.vl_orcamento_contrato, 0)) AS "%% FEE/MAF",
                     ta.valor AS "FEE INICIAL",
                     CASE
                         WHEN f.dt_contrato IS NULL
@@ -184,7 +184,7 @@ def obter_carteira_realizado(limit: int = 5000, offset: int = 0):
                     f.id AS "COD FUNDO",
                     f.nm_fundo AS "FUNDO",
                     f.vl_orcamento_contrato AS "MAF INICIAL",
-                    (ta.valor / NULLIF(f.vl_orcamento_contrato, 0)) AS "% FEE/MAF",
+                    (ta.valor / NULLIF(f.vl_orcamento_contrato, 0)) AS "%% FEE/MAF",
                     ta.valor AS "FEE INICIAL",
                     CASE
                         WHEN f.dt_contrato IS NULL
@@ -255,7 +255,6 @@ def obter_rps_fee(limit: int = 5000, offset: int = 0):
     try:
         conn = pool.getconn()
         with conn.cursor() as cursor:
-            # Uso de %% para escapar os símbolos de porcentagem para o psycopg2 não dar erro
             query = """
                 SELECT
                     rp.tb_fundo_id_fundo AS "CÓD. FUNDO",
