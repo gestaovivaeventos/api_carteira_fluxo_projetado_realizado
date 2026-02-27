@@ -146,89 +146,197 @@ def obter_carteira_realizado(limit: int = 5000, offset: int = 0):
         with conn.cursor() as cursor:
             query = """
                 WITH
-                    cte_taxas AS (
-                        SELECT
-                            id_fundo,
-                            valor
-                        FROM
-                            tb_taxas_adicionais
-                        WHERE
-                            id_taxa = 6
-                    ),
-                    cte_dados_ordem AS (
-                        SELECT
-                            fundo_id,
-                            MIN(dt_vencimento_original) AS primeiro_boleto,
-                            SUM(vl_pago) AS total_arrecadado
-                        FROM
-                            tb_ordem
-                        WHERE
-                            fl_ativo IS TRUE
-                        GROUP BY
-                            fundo_id
-                    ),
-                    cte_rp AS (
-                        SELECT
-                            tb_fundo_id_fundo AS fundo_id,
-                            SUM(valor_pagar) AS total_rp_paga
-                        FROM
-                            tb_requisicao_pagamento
-                        WHERE
-                            data_compensacao IS NOT NULL
-                            AND status = '5'
-                        GROUP BY
-                            tb_fundo_id_fundo
-                    )
-                SELECT
-                    u.nm_unidade AS "FRANQUIA",
-                    f.id AS "COD FUNDO",
-                    f.nm_fundo AS "FUNDO",
-                    f.vl_orcamento_contrato AS "MAF INICIAL",
-                    (ta.valor / NULLIF(f.vl_orcamento_contrato, 0)) AS "%% FEE/MAF",
-                    ta.valor AS "FEE INICIAL",
-                    CASE
-                        WHEN f.dt_contrato IS NULL
-                        OR f.dt_contrato > f.dt_cadastro THEN f.dt_cadastro
-                        ELSE f.dt_contrato
-                    END AS dt_contrato_fundo,
-                    ordem_resumo.primeiro_boleto AS "PRIMEIRO BOLETO",
-                    f.dt_baile,
-                    COALESCE(ordem_resumo.total_arrecadado, 0) AS "VALOR ARRECADADO PELO FUNDO",
-                    COALESCE(rp.total_rp_paga, 0) AS "VALOR TOTAL DE RP PAGA",
-                    (
-                        COALESCE(ordem_resumo.total_arrecadado, 0) - COALESCE(rp.total_rp_paga, 0)
-                    ) AS "SALDO"
-                FROM
-                    tb_fundo f
-                    INNER JOIN tb_unidade u ON u.id = f.unidade_id
-                    INNER JOIN tb_integrante i ON i.fundo_id = f.id
-                    INNER JOIN tb_fundo_cota fc ON fc.cota_id = i.cota_id
-                    AND i.fundo_id = fc.fundo_id
-                    LEFT JOIN cte_taxas ta ON ta.id_fundo = f.id
-                    LEFT JOIN cte_dados_ordem ordem_resumo ON ordem_resumo.fundo_id = f.id
-                    LEFT JOIN cte_rp rp ON rp.fundo_id = f.id
-                WHERE
-                    u.categoria = '2'
-                    AND f.tipocliente_id IN (15, 17) 
-                    AND f.is_assessoria_pura IS FALSE
-                    AND f.is_fundo_teste IS FALSE
-                    AND f.dt_cadastro > '2019-01-01'
-                    AND f.dt_baile > '2024-08-01'
-                    AND f.carteiracobranca_id IN (2428, 2574) 
-                GROUP BY
-                    u.nm_unidade,
-                    f.id,
-                    f.nm_fundo,
-                    f.vl_orcamento_contrato,
-                    ta.valor,
-                    f.dt_cadastro,
-                    f.dt_contrato,
-                    ordem_resumo.primeiro_boleto,
-                    f.dt_baile,
-                    ordem_resumo.total_arrecadado,
-                    rp.total_rp_paga
-                ORDER BY
-                    f.id
+	-- CTEs da Consulta Original (Taxas e Primeiro Boleto)
+	cte_taxas AS (
+		SELECT
+			id_fundo,
+			valor
+		FROM
+			tb_taxas_adicionais
+		WHERE
+			id_taxa = 6
+	),
+	cte_dados_ordem AS (
+		SELECT
+			fundo_id,
+			MIN(dt_vencimento_original) AS primeiro_boleto
+		FROM
+			tb_ordem
+		WHERE
+			fl_ativo IS TRUE
+		GROUP BY
+			fundo_id
+	),
+	
+	-- CTEs da Nova Lógica SPDX
+	-- Soma de Ordens (Base para o Saldo SPDX) -> CRÉDITO
+	cte_ordem AS (
+		SELECT
+			t0.fundo_id,
+			SUM(t0.vl_pago) AS vl_pago_spdx_base
+		FROM
+			tb_ordem t0
+		WHERE
+			t0.fl_ativo = TRUE
+			AND t0.tipo_conta_fundo = 'SPDX'
+			AND t0.dt_liquidacao IS NOT NULL
+			AND NOT EXISTS (
+				SELECT
+					1
+				FROM
+					tb_integrante_financeiro t2
+				WHERE
+					t2.ordem_id = t0.id
+					AND t2.tipocobranca_id = 12
+			)
+		GROUP BY
+			t0.fundo_id
+	),
+	-- Soma de Requisições (Compensadas e Projetadas) -> DÉBITO
+	cte_requisicao AS (
+		SELECT
+			r.tb_fundo_id_fundo AS fundo_id,
+			SUM(
+				CASE
+					WHEN r.data_compensacao IS NULL
+					AND r.data_hora_terceira_aprovacao IS NOT NULL THEN (
+						COALESCE(r.valor_receber, 0) + COALESCE(r.valor_tarifa, 0)
+					)
+					ELSE 0
+				END
+			) AS calc_proj_spdx,
+			SUM(
+				CASE
+					WHEN r.data_compensacao IS NOT NULL THEN (
+						COALESCE(r.valor_receber, 0) + COALESCE(r.valor_tarifa, 0)
+					)
+					ELSE 0
+				END
+			) AS calc_comp_spdx
+		FROM
+			tb_requisicao_pagamento r
+		WHERE
+			r.habilitado = TRUE
+			AND r.tp_conta = 'SPDX'
+		GROUP BY
+			r.tb_fundo_id_fundo
+	),
+	-- Soma de Tarifas Bancárias -> DÉBITO
+	cte_tarifa AS (
+		SELECT
+			v.fundo_id,
+			SUM(v.valor_tarifa) AS totaltarifasbancariasspdx
+		FROM
+			vw_materializada_tarifa_bancaria v
+			INNER JOIN tb_ordem t ON t.id = v.ordem_id
+		WHERE
+			t.tipo_conta_fundo = 'SPDX'
+		GROUP BY
+			v.fundo_id
+	),
+	-- Soma de Transferências -> SEPARADO EM CRÉDITO E DÉBITO
+	cte_transferencia AS (
+		SELECT
+			fundo_id,
+			SUM(
+				CASE
+					WHEN tipo_movimentacao = 'CRED' THEN valor
+					ELSE 0
+				END
+			) AS transferencia_credito,
+			SUM(
+				CASE
+					WHEN tipo_movimentacao <> 'CRED' THEN valor
+					ELSE 0
+				END
+			) AS transferencia_debito
+		FROM
+			tb_transferencia_saldo
+		WHERE
+			tipo_conta = 'SPDX'
+		GROUP BY
+			fundo_id
+	)
+
+-- Resultado Final
+SELECT
+	u.nm_unidade AS "FRANQUIA",
+	f.id AS "COD FUNDO",
+	f.nm_fundo AS "FUNDO",
+	f.vl_orcamento_contrato AS "MAF INICIAL",
+	(ta.valor / NULLIF(f.vl_orcamento_contrato, 0)) AS "% FEE/MAF",
+	ta.valor AS "FEE INICIAL",
+	CASE
+		WHEN f.dt_contrato IS NULL
+		OR f.dt_contrato > f.dt_cadastro THEN f.dt_cadastro
+		ELSE f.dt_contrato
+	END AS dt_contrato_fundo,
+	ordem_resumo.primeiro_boleto AS "PRIMEIRO BOLETO",
+	f.dt_baile,
+	
+	-- NOVAS COLUNAS SPDX
+	-- COLUNA DE CRÉDITOS (Entradas)
+	(
+		COALESCE(o.vl_pago_spdx_base, 0) + 
+		COALESCE(tr.transferencia_credito, 0)
+	) AS "TOTAL CREDITO",
+    
+	-- COLUNA DE DÉBITOS (Saídas)
+	(
+		COALESCE(r.calc_proj_spdx, 0) + 
+		COALESCE(r.calc_comp_spdx, 0) + 
+		COALESCE(tar.totaltarifasbancariasspdx, 0) + 
+		COALESCE(tr.transferencia_debito, 0)
+	) AS "TOTAL DEBITO",
+    
+    -- SALDO PROJETADO (Crédito - Débito)
+	(
+		(COALESCE(o.vl_pago_spdx_base, 0) + COALESCE(tr.transferencia_credito, 0))
+		- 
+		(COALESCE(r.calc_proj_spdx, 0) + COALESCE(r.calc_comp_spdx, 0) + COALESCE(tar.totaltarifasbancariasspdx, 0) + COALESCE(tr.transferencia_debito, 0))
+	) AS "SALDO PROJETADO"
+
+FROM
+	tb_fundo f
+	INNER JOIN tb_unidade u ON u.id = f.unidade_id
+	INNER JOIN tb_integrante i ON i.fundo_id = f.id
+	INNER JOIN tb_fundo_cota fc ON fc.cota_id = i.cota_id AND i.fundo_id = fc.fundo_id
+	LEFT JOIN cte_taxas ta ON ta.id_fundo = f.id
+	LEFT JOIN cte_dados_ordem ordem_resumo ON ordem_resumo.fundo_id = f.id
+	
+	-- JOINS da lógica SPDX
+	LEFT JOIN cte_ordem o ON o.fundo_id = f.id
+	LEFT JOIN cte_requisicao r ON r.fundo_id = f.id
+	LEFT JOIN cte_tarifa tar ON tar.fundo_id = f.id
+	LEFT JOIN cte_transferencia tr ON tr.fundo_id = f.id
+
+WHERE
+	u.categoria = '2'
+	AND f.tipocliente_id IN (15, 17) -- FUNDO DE FORMATURA E PRE EVENTO
+	AND f.is_assessoria_pura IS FALSE
+	AND f.is_fundo_teste IS FALSE
+	AND f.dt_cadastro > '2019-01-01'
+	AND f.dt_baile > '2024-08-01'
+	AND f.carteiracobranca_id IN (2428, 2574) -- 2428 CONTA UNIFICADA - SICOOB | 2574 SPDX (FIXO) - BBPay
+
+GROUP BY
+	u.nm_unidade,
+	f.id,
+	f.nm_fundo,
+	f.vl_orcamento_contrato,
+	ta.valor,
+	f.dt_cadastro,
+	f.dt_contrato,
+	ordem_resumo.primeiro_boleto,
+	f.dt_baile,
+	
+	-- CAMPOS ADICIONADOS AO GROUP BY DEVIDO ÀS NOVAS COLUNAS DE CÁLCULO
+	o.vl_pago_spdx_base, 
+	tr.transferencia_credito, 
+	r.calc_proj_spdx, 
+	r.calc_comp_spdx, 
+	tar.totaltarifasbancariasspdx, 
+	tr.transferencia_debito;
                 LIMIT %s OFFSET %s
             """
             cursor.execute(query, (limit, offset))
