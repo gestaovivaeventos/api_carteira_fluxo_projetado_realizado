@@ -169,7 +169,6 @@ def obter_carteira_realizado(limit: int = 5000, offset: int = 0):
                         GROUP BY
                             fundo_id
                     ),
-                    
                     -- CTEs da Nova Lógica SPDX
                     -- Soma de Ordens (Base para o Saldo SPDX) -> CRÉDITO
                     cte_ordem AS (
@@ -259,7 +258,6 @@ def obter_carteira_realizado(limit: int = 5000, offset: int = 0):
                         GROUP BY
                             fundo_id
                     )
-
                 -- Resultado Final
                 SELECT
                     u.nm_unidade AS "FRANQUIA",
@@ -275,52 +273,43 @@ def obter_carteira_realizado(limit: int = 5000, offset: int = 0):
                     END AS dt_contrato_fundo,
                     ordem_resumo.primeiro_boleto AS "PRIMEIRO BOLETO",
                     f.dt_baile,
-                    
                     -- NOVAS COLUNAS SPDX
                     -- COLUNA DE CRÉDITOS (Entradas)
                     (
-                        COALESCE(o.vl_pago_spdx_base, 0) + 
-                        COALESCE(tr.transferencia_credito, 0)
+                        COALESCE(o.vl_pago_spdx_base, 0) + COALESCE(tr.transferencia_credito, 0)
                     ) AS "TOTAL CREDITO",
-                    
                     -- COLUNA DE DÉBITOS (Saídas)
                     (
-                        COALESCE(r.calc_proj_spdx, 0) + 
-                        COALESCE(r.calc_comp_spdx, 0) + 
-                        COALESCE(tar.totaltarifasbancariasspdx, 0) + 
-                        COALESCE(tr.transferencia_debito, 0)
+                        COALESCE(r.calc_proj_spdx, 0) + COALESCE(r.calc_comp_spdx, 0) + COALESCE(tar.totaltarifasbancariasspdx, 0) + COALESCE(tr.transferencia_debito, 0)
                     ) AS "TOTAL DEBITO",
-                    
                     -- SALDO PROJETADO (Crédito - Débito)
                     (
-                        (COALESCE(o.vl_pago_spdx_base, 0) + COALESCE(tr.transferencia_credito, 0))
-                        - 
-                        (COALESCE(r.calc_proj_spdx, 0) + COALESCE(r.calc_comp_spdx, 0) + COALESCE(tar.totaltarifasbancariasspdx, 0) + COALESCE(tr.transferencia_debito, 0))
+                        (
+                            COALESCE(o.vl_pago_spdx_base, 0) + COALESCE(tr.transferencia_credito, 0)
+                        ) - (
+                            COALESCE(r.calc_proj_spdx, 0) + COALESCE(r.calc_comp_spdx, 0) + COALESCE(tar.totaltarifasbancariasspdx, 0) + COALESCE(tr.transferencia_debito, 0)
+                        )
                     ) AS "SALDO PROJETADO"
-
                 FROM
                     tb_fundo f
                     INNER JOIN tb_unidade u ON u.id = f.unidade_id
                     INNER JOIN tb_integrante i ON i.fundo_id = f.id
-                    INNER JOIN tb_fundo_cota fc ON fc.cota_id = i.cota_id AND i.fundo_id = fc.fundo_id
+                    INNER JOIN tb_fundo_cota fc ON fc.cota_id = i.cota_id
+                    AND i.fundo_id = fc.fundo_id
                     LEFT JOIN cte_taxas ta ON ta.id_fundo = f.id
                     LEFT JOIN cte_dados_ordem ordem_resumo ON ordem_resumo.fundo_id = f.id
-                    
                     -- JOINS da lógica SPDX
                     LEFT JOIN cte_ordem o ON o.fundo_id = f.id
                     LEFT JOIN cte_requisicao r ON r.fundo_id = f.id
                     LEFT JOIN cte_tarifa tar ON tar.fundo_id = f.id
                     LEFT JOIN cte_transferencia tr ON tr.fundo_id = f.id
-
                 WHERE
                     u.categoria = '2'
                     AND f.tipocliente_id IN (15, 17) -- FUNDO DE FORMATURA E PRE EVENTO
                     AND f.is_assessoria_pura IS FALSE
                     AND f.is_fundo_teste IS FALSE
-                    AND f.dt_cadastro > '2019-01-01'
-                    AND f.dt_baile > '2024-08-01'
-                    AND f.carteiracobranca_id IN (2428, 2574) -- 2428 CONTA UNIFICADA - SICOOB | 2574 SPDX (FIXO) - BBPay
-
+                    AND f.fl_ativo IS TRUE
+                    AND f.carteiracobranca_id IN (2428,2574, 2248, 2485) --CONTA UNIFICADA - SICOOB | SPDX (FIXO) - BBPay | CONTA UNIFICADA - BANCO DO BRASIL | CONTA UNIFICADA - SICOOB - SEM REGISTRO
                 GROUP BY
                     u.nm_unidade,
                     f.id,
@@ -331,13 +320,14 @@ def obter_carteira_realizado(limit: int = 5000, offset: int = 0):
                     f.dt_contrato,
                     ordem_resumo.primeiro_boleto,
                     f.dt_baile,
-                    o.vl_pago_spdx_base, 
-                    tr.transferencia_credito, 
-                    r.calc_proj_spdx, 
-                    r.calc_comp_spdx, 
-                    tar.totaltarifasbancariasspdx, 
+                    -- CAMPOS ADICIONADOS AO GROUP BY DEVIDO ÀS NOVAS COLUNAS DE CÁLCULO
+                    o.vl_pago_spdx_base,
+                    tr.transferencia_credito,
+                    r.calc_proj_spdx,
+                    r.calc_comp_spdx,
+                    tar.totaltarifasbancariasspdx,
                     tr.transferencia_debito
-                ORDER BY 
+                ORDER BY
                     f.id
                 LIMIT %s OFFSET %s
             """
