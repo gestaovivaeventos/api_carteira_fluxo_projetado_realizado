@@ -108,7 +108,7 @@ def obter_carteira_projecao(limit: int = 5000, offset: int = 0):
 
 
 # ==========================================
-# ROTA 2: CARTEIRA REALIZADO (Atualizada)
+# ROTA 2: CARTEIRA REALIZADO
 # ==========================================
 @app.get("/carteira_realizado")
 def obter_carteira_realizado(limit: int = 5000, offset: int = 0):
@@ -190,7 +190,7 @@ def obter_carteira_realizado(limit: int = 5000, offset: int = 0):
 
 
 # ==========================================
-# ROTA 3: RPS FEE (Atualizada)
+# ROTA 3: RPS FEE
 # ==========================================
 @app.get("/rps_fee")
 def obter_rps_fee(limit: int = 5000, offset: int = 0):
@@ -331,7 +331,8 @@ def obter_informacoes_complementares(limit: int = 5000, offset: int = 0):
                     CASE 
                         WHEN f.pretende_abrir_conta_propria IS TRUE THEN 'SIM'
                         ELSE 'NÃO'
-                    END AS "PRETENDE ABRIR CP"
+                    END AS "PRETENDE ABRIR CP",
+                    fc.fundos_correlatos AS "FUNDO CORRELATOS"
                 FROM
                     tb_fundo f
                 JOIN 
@@ -342,6 +343,8 @@ def obter_informacoes_complementares(limit: int = 5000, offset: int = 0):
                     VvrAtivos va ON f.id = va.id_fundo
                 LEFT JOIN 
                     CteTaxasFee tf ON f.id = tf.id_fundo
+                LEFT JOIN 
+                    tb_grupo_fundos_correlatos fc ON fc.id = f.id_grupo_fundos_correlatos
                 WHERE
                     f.fl_ativo IS true
                     AND u.categoria = '2'
