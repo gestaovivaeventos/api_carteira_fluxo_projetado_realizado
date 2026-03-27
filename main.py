@@ -43,7 +43,7 @@ def health_check():
 @app.get("/carteira_projecao")
 def obter_carteira_projecao(limit: int = 5000, offset: int = 0):
     if not pool:
-        raise HTTPException(status_code=503, detail="Serviço indisponível: pool de conexões falhou.")
+        raise HTTPException(status_code=503, detail="Serviço indisponível.")
 
     conn = None
     try:
@@ -190,7 +190,7 @@ def obter_carteira_realizado(limit: int = 5000, offset: int = 0):
 
 
 # ==========================================
-# ROTA 3: RPS FEE
+# ROTA 3: RPS FEE (ATUALIZADA)
 # ==========================================
 @app.get("/rps_fee")
 def obter_rps_fee(limit: int = 5000, offset: int = 0):
@@ -203,35 +203,55 @@ def obter_rps_fee(limit: int = 5000, offset: int = 0):
         with conn.cursor() as cursor:
             query = """
                 SELECT
-                    rp.tb_fundo_id_fundo AS "CÓD. FUNDO", f.nm_fundo AS "FUNDO", u.nm_unidade AS "FRANQUIA",
-                    fo.nome_fantasia AS "FORNECEDOR", cf.nome_categoria AS "CATEGORIA", rp.valor_pagar AS "VALOR",
-                    rp.data_hora_segunda_aprovacao AS "COMPENSADO EM", u.ds_cnpj AS "CNPJ DA FRANQUIA",
-                    fo.id_fornecedor AS "COD. FORNECEDOR", fo.tipo_fornecedor AS "TIPO DE CADASTRO FORNECEDOR",
+                    rp.tb_fundo_id_fundo AS "CÓD. FUNDO", 
+                    f.nm_fundo AS "FUNDO", 
+                    u.nm_unidade AS "FRANQUIA",
+                    fo.nome_fantasia AS "FORNECEDOR", 
+                    cf.nome_categoria AS "CATEGORIA", 
+                    rp.valor_pagar AS "VALOR",
+                    rp.data_hora_segunda_aprovacao AS "COMPENSADO EM", 
+                    u.ds_cnpj AS "CNPJ DA FRANQUIA",
+                    fo.id_fornecedor AS "COD. FORNECEDOR", 
+                    fo.tipo_fornecedor AS "TIPO DE CADASTRO FORNECEDOR",
                     CASE WHEN fo.cnpj IS NULL THEN fo.cpf ELSE fo.cnpj END AS "DOCUMENTO FORNECEDOR",
                     CASE WHEN fo.unidade_propria IS FALSE THEN 'Não' ELSE 'Sim' END AS "UNIDADE PROPRIA",
-                    fo.classificacao AS "CLASSIFICAÇÃO", fdb.id AS "CÓD. FAVORECIDO", fdb.nm_favorecido AS "FAVORECIDO",
-                    rp.id_requisicao_pagamento AS "ID DA RP", ops.nome AS "SERVIÇO OP", rp.descricao AS "DESCRIÇÃO",
+                    fo.classificacao AS "CLASSIFICAÇÃO", 
+                    fdb.id AS "CÓD. FAVORECIDO", 
+                    fdb.nm_favorecido AS "FAVORECIDO",
+                    rp.id_requisicao_pagamento AS "ID DA RP", 
+                    ops.nome AS "SERVIÇO OP", 
+                    rp.descricao AS "DESCRIÇÃO",
                     f.dt_baile AS "DATA BAILE",
                     CASE 
                         WHEN EXTRACT(DAY FROM (f.dt_baile - rp.data_compensacao)) < 90 THEN 'ULTIMA PARCELA'
                         ELSE 'ANTECIPAÇÃO'
-                    END AS "TIPO DE RECEITA"
+                    END AS "TIPO DE RECEITA",
+                    ips.nome AS "NOME DO ITEM"
                 FROM tb_fornecedores fo
-                    JOIN tb_unidade u ON u.id = fo.tb_unidade_id
-                    JOIN tb_categoria_fornecedor cf ON cf.id_categoria_fornecedor = fo.tb_categoria_fornecedor_id_categoria_fornecedor
-                    JOIN tb_requisicao_pagamento rp ON rp.tb_fornecedores_id_fornecedor = fo.id_fornecedor
-                    JOIN tb_fornecedores_dados_bancarios fdb ON fdb.id_tb_fornecedores = rp.id_tb_fornecedores_dados_bancarios
-                    JOIN tb_requisicao_pagamento_op_servico rpos ON rpos.id_rp = rp.id_requisicao_pagamento
-                    JOIN tb_op_produto_servico ops ON ops.id = rpos.id_servico_associado
-                    JOIN tb_fundo f ON f.id = rp.tb_fundo_id_fundo
-                WHERE fo.habilitado IS TRUE AND u.categoria = '2'
-                    AND (ops.nome = 'FEE/CERIMONIAL - MC FRANQUIA %%' OR ops.nome = '%%CERIMONIAL VIVA%%')
+                    LEFT JOIN tb_unidade u ON u.id = fo.tb_unidade_id
+                    LEFT JOIN tb_categoria_fornecedor cf ON cf.id_categoria_fornecedor = fo.tb_categoria_fornecedor_id_categoria_fornecedor
+                    LEFT JOIN tb_requisicao_pagamento rp ON rp.tb_fornecedores_id_fornecedor = fo.id_fornecedor
+                    LEFT JOIN tb_fornecedores_dados_bancarios fdb ON fdb.id_tb_fornecedores = rp.id_tb_fornecedores_dados_bancarios
+                    LEFT JOIN tb_requisicao_pagamento_op_servico rpos ON rpos.id_rp = rp.id_requisicao_pagamento
+                    LEFT JOIN tb_op_produto_servico ops ON ops.id = rpos.id_servico_associado
+                    LEFT JOIN tb_fundo f ON f.id = rp.tb_fundo_id_fundo
+                    LEFT JOIN tb_requisicao_pagamento_op_item rpoi ON rpoi.id_rp = rp.id_requisicao_pagamento
+                    LEFT JOIN tb_op_item_produto_servico ips ON ips.id = rpoi.id_item_associado
+                    LEFT JOIN tb_op_produto_servico ps ON ps.id = ips.id_tb_op_produto_servico
+                WHERE fo.habilitado IS TRUE 
+                    AND u.categoria = '2'
                     AND rp.data_hora_segunda_aprovacao > '2026-03-15'
                     AND rp.data_hora_segunda_aprovacao IS NOT NULL
                     AND rp.novo_cadastro IS TRUE
                     AND rp.descricao NOT ILIKE '%%MARGEM%%'
-                GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20
-                ORDER BY rp.tb_fundo_id_fundo LIMIT %s OFFSET %s
+                    AND (
+                        ops.nome = 'FEE/CERIMONIAL - MC FRANQUIA %%' 
+                        OR ops.nome = '%%%%CERIMONIAL VIVA%%%%' 
+                        OR ps.nome = 'FEE/CERIMONIAL - MC FRANQUIA %%'
+                    )
+                GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21
+                ORDER BY rp.tb_fundo_id_fundo 
+                LIMIT %s OFFSET %s
             """
             cursor.execute(query, (limit, offset))
             dados = cursor.fetchall()
