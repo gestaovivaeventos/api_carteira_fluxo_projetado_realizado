@@ -227,7 +227,7 @@ def obter_rps_fee(limit: int = 5000, offset: int = 0):
                         ELSE 'ANTECIPAÇÃO'
                     END AS "TIPO DE RECEITA",
                     ips.nome AS "NOME DO ITEM",
-                    rp.data_compesacao as "DATA COMPENSADO REAL"
+                    rp.data_compensacao as "DATA COMPENSADO REAL"
                 FROM tb_fornecedores fo
                     LEFT JOIN tb_unidade u ON u.id = fo.tb_unidade_id
                     LEFT JOIN tb_categoria_fornecedor cf ON cf.id_categoria_fornecedor = fo.tb_categoria_fornecedor_id_categoria_fornecedor
